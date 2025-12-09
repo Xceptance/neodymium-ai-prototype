@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<datafile>
+	<dataset id="validate_mini_cart_placement">
+		<data key="prompt">Open a browser
+			load https://posters.xceptance.io:8443/
+			Hover over the first main category
+			Click the tree category
+			Wait till the page is completely loaded
+
+			Open a random product
+
+			Validate if the price is in $
+			Add the Product to the cart
+			Click The mini Cart Icon
+			Validate that the mini cart is visible and properly placed
+			Validate that the item is present in the mini Cart
+		</data>
+	</dataset>
+	<dataset id="checkout">
+		<data key="prompt">Open a browser
+			load https://posters.xceptance.io:8443/
+			Hover over the first main category
+			Click the tree category
+			Wait till the page is completely loaded
+
+			Open a random product
+
+			Validate if the price is in $
+			Add the Product to the cart
+			Lade die seite neu
+			Click The mini Cart Icon
+			Validate that the mini cart is visible
+			Validate that the item is present in the mini Cart
+			Open the cart page
+			Validate the chosen item is in the cart
+			Start the checkout as a guest
+			Insert the shipping address:
+			- Hans Peter Klausen, Leutragraben 2-4, 07743 Jena
+			Continue to payment using the CSS selector "#button-add-shipping-address"
+			Pay with a random creditcard number
+			Validate on the order confirmation page that the selected Item is named and
+			the address is correct
+		</data>
+	</dataset>
+	<dataset id="check_euro_price_on_US">
+		<data key="prompt">Open a browser
+			load https://posters.xceptance.io:8443/
+			Hover over the first main category
+			Click the tree category
+			Wait till the page is completely loaded
+
+			Open a random product
+
+			Validate if the price is in €
+		</data>
+	</dataset>
+	<dataset id="add_to_cart_by_java">
+		<data key="prompt">Open a browser
+			load https://posters.xceptance.io:8443/
+			use the search bar and search for "bear"
+			Choose a random product and open it
+			configure the product
+			add the product to the cart, by using the java method addToCart()
+			validate that the number on the cart item changed to 1 
+		</data>
+	</dataset>
+</datafile>
