@@ -9,6 +9,7 @@ import static com.codeborne.selenide.Selenide.$;
 import java.io.ByteArrayInputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -17,6 +18,7 @@ import java.util.Map;
 import org.apache.commons.lang3.StringUtils;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
+import org.jspecify.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.jupiter.api.Assertions;
 import org.openqa.selenium.Dimension;
@@ -34,6 +36,7 @@ import com.codeborne.selenide.WebDriverRunner;
 import com.google.genai.Client;
 import com.google.genai.types.ComputerUse;
 import com.google.genai.types.Content;
+import com.google.genai.types.CountTokensResponse;
 import com.google.genai.types.Environment;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionDeclaration;
@@ -46,6 +49,7 @@ import com.google.genai.types.Type;
 import com.xceptance.neodymium.ai.data.AITestData;
 import com.xceptance.neodymium.ai.util.ScreenshotMarker;
 import com.xceptance.neodymium.common.testdata.DataItem;
+import com.xceptance.neodymium.util.AllureAddons;
 import com.xceptance.neodymium.util.Neodymium;
 import com.xceptance.neodymium.util.SelenideAddons;
 
@@ -62,7 +66,7 @@ import io.qameta.allure.Allure;
 // @Retry()
 public abstract class AbstractAiTest
 {
-    private static final String gemini_api_key = "";
+    private static final String gemini_api_key = "AIzaSyC8WX_6ok70RkVB_PJEfW5fZp-R5saxfAA";
 
     // TODO: we need to get this from Neodymiums browser configuration.
     /** Standard viewport height for AI consistency. */
@@ -70,6 +74,8 @@ public abstract class AbstractAiTest
 
     /** Standard viewport width for AI consistency. */
     public static final int viewPortX = 1600;
+
+    final int TOKEN_LIMIT = 120_000;
 
     @DataItem
     AITestData data;
@@ -93,6 +99,7 @@ public abstract class AbstractAiTest
         // Ensure consistent resolution for coordinate mapping
         scaleViewPortTo(viewPortX, viewPortY);
 
+        // List of test steps (only for debugging right now)
         List<String> testSteps = new ArrayList<String>();
         List<FunctionDeclaration> functionDeclarations = generateFunctionDeclarations();
 
@@ -112,220 +119,272 @@ public abstract class AbstractAiTest
             int safetyCounter = 0;
             boolean testFinished = false;
 
-            // Main interaction loop
-            while (true)
+            StringBuilder log = new StringBuilder();
+            try
             {
-                // Call Gemini API
-                response = client.models.generateContent(
-                                                         "gemini-2.5-computer-use-preview-10-2025",
-                                                         history,
-                                                         GenerateContentConfig.builder()
-                                                                              .systemInstruction(systemInstruction)
-                                                                              .tools(Tool.builder()
-                                                                                         .functionDeclarations(functionDeclarations)
-                                                                                         .computerUse(ComputerUse.builder()
-                                                                                                                 .environment(Environment.Known.ENVIRONMENT_BROWSER)
-                                                                                                                 .build())
-                                                                                         .build())
-                                                                              .build());
-                System.out.println("Full response:" + response.text());
-
-                // Handle cases where AI stops outputting function calls (Safety or Confusion)
-                if (response.functionCalls() == null || response.functionCalls().isEmpty())
+                // Main interaction loop
+                while (true)
                 {
-                    if (testFinished)
+                    String model = "gemini-2.5-computer-use-preview-10-2025";
+
+                    manageHistory(client, history, model, functionDeclarations, systemInstruction);
+                    
+                    // Call Gemini API
+                    response = client.models.generateContent(
+                                                             model,
+                                                             history,
+                                                             GenerateContentConfig.builder()
+                                                                                  .systemInstruction(systemInstruction)
+                                                                                  .tools(Tool.builder()
+                                                                                             .functionDeclarations(functionDeclarations)
+                                                                                             .computerUse(ComputerUse.builder()
+                                                                                                                     .environment(Environment.Known.ENVIRONMENT_BROWSER)
+                                                                                                                     .build())
+                                                                                             .build())
+                                                                                  .build());
+
+                    @Nullable
+                    String responseText = response.text();
+
+                    if (StringUtils.isNoneBlank(responseText))
                     {
-                        System.out.println("### Test finished, nice! ###");
-                        break;
+                        log
+                           .append("Thoughts:\n")
+                           .append(responseText)
+                           .append("\n");
                     }
                     else
                     {
-                        System.out.println("### No function call received. SafetyCounter: " + safetyCounter++ + " ###");
-                        Assert.assertTrue("AI stopped working before the test was officially finished.", safetyCounter < 15);
-                        // Nudge the AI to continue if it falls silent
-                        history.add(Content.fromParts(Part.fromText("Continue with your task.")));
-                        continue;
+                        history.add(Content.fromParts(Part.fromText("Remember: Always add yout Thoughts in the reuquired xml like format to your repsonse!")));
                     }
-                }
 
-                if (!response.candidates().isEmpty())
-                {
-                    history.add(response.candidates().get().get(0).content().get());
-                }
+                    System.out.println("Full response:" + responseText);
 
-                // Process Function Calls requested by AI
-                for (FunctionCall functionCall : response.functionCalls())
-                {
-                    Map<String, Object> args = functionCall.args().get();
-                    System.out.println("Tester Action ==> " + functionCall.name().get() + " " + args);
-
-                    Map<String, Object> result = new HashMap<>();
-                    if (args.containsKey("safety_decision"))
+                    // Handle cases where AI stops outputting function calls (Safety or Confusion)
+                    if (response.functionCalls() == null || response.functionCalls().isEmpty())
                     {
-                        result.put("safety_acknowledgement", "true");
-                    }
-
-                    String stepDescription = (String) args.get("description");
-                    if (StringUtils.isBlank(stepDescription))
-                    {
-                        stepDescription = functionCall.name().get() + " " + args;
-                        testSteps.add(stepDescription);
-                    }
-                    else
-                    {
-                        testSteps.add(stepDescription + "  (" + functionCall.name().get() + " " + args + ")");
-                    }
-
-                    safetyCounter = 0;
-                    testFinished = Allure.step(stepDescription, () -> {
-
-
-                        // takeScreenshot(functionCall, "_00_before_function"); // Debug screenshot
-
-                        boolean testFinishedInsideStep = false;
-
-                        // --- FUNCTION EXECUTION SWITCH ---
-                        switch (functionCall.name().get())
+                        if (testFinished)
                         {
-                            case "open_web_browser":
-                                result.put("status", "success");
-                                break;
-                            case "navigate":
-                            case "navigate_to_url":
-                                Selenide.open((String) args.get("url"));
-                                result.put("status", "success");
-                                break;
-                            case "go_back":
-                                Selenide.back();
-                                result.put("status", "success");
-                                break;
-                            case "java_method":
-                                runMethodWithReflection((String) args.get("name"), (String) args.get("parameter"));
-                                result.put("status", "success");
-                            case "finish_test":
-                                testFinishedInsideStep = true;
-                                testSteps.add("Summary: " + (String) args.get("summary"));
-                                break;
-                            case "click_element":
-                                try
-                                {
-                                    $((String) args.get("selector"))
-                                                                    .highlight()
-                                                                    .click();
-                                    result.put("status", "success");
-                                }
-                                catch (Exception e)
-                                {
-                                    result.put("status", "error");
-                                    result.put("message", e.getMessage());
-                                }
-                                break;
-                            case "click_at":
-                                int xClick = ((Number) args.get("x")).intValue();
-                                int yClick = ((Number) args.get("y")).intValue();
-                                clickScaledCoords(xClick, yClick);
-                                result.put("status", "success");
-                                break;
-                            case "type_text":
-                                String text = (String) args.get("text");
-                                String selectorForTyping = (String) args.get("selector");
-                                if (selectorForTyping != null)
-                                {
-                                    $(selectorForTyping).highlight().type(text);
-                                }
-                                else
-                                {
-                                    sendText(text); // Global typing (no specific element)
-                                }
-                                result.put("status", "success");
-                                break;
-                            case "type_text_at":
-                                boolean clearBeforeTyping = (boolean) ((args.get("clear_before_typing") == null) ? false : args.get("clear_before_typing"));
-                                String text_to_type = (String) args.get("text");
-                                boolean press_enter = (Boolean) args.getOrDefault("press_enter", false);
-                                int xType = ((Number) args.get("x")).intValue();
-                                int yType = ((Number) args.get("y")).intValue();
+                            System.out.println("### Test finished, nice! ###");
+                            break;
+                        }
+                        else
+                        {
+                            System.out.println("### No function call received. SafetyCounter: " + safetyCounter++ + " ###");
+                            Assert.assertTrue("AI stopped working before the test was officially finished.", safetyCounter < 15);
+                            // Nudge the AI to continue if it falls silent
+                            history.add(Content.fromParts(Part.fromText("Continue with your task.")));
+                            continue;
+                        }
+                    }
 
-                                if (clearBeforeTyping == true)
+                    if (!response.candidates().isEmpty())
+                    {
+                        history.add(response.candidates().get().get(0).content().get());
+                    }
+
+                    // Process Function Calls requested by AI
+                    for (FunctionCall functionCall : response.functionCalls())
+                    {
+                        try
+                        {
+                            Map<String, Object> args = functionCall.args().get();
+
+                            log.append("Called Function:\n").append("\t").append(functionCall.name().get()).append("\n").append(args).append("\n");
+                            System.out.println("Tester Action ==> " + functionCall.name().get() + " " + args);
+
+                            Map<String, Object> result = new HashMap<>();
+                            if (args.containsKey("safety_decision"))
+                            {
+                                result.put("safety_acknowledgement", "true");
+                            }
+
+                            String stepDescription = (String) args.get("description");
+                            if (StringUtils.isBlank(stepDescription))
+                            {
+                                stepDescription = functionCall.name().get() + " " + args;
+                                testSteps.add(stepDescription);
+                            }
+                            else
+                            {
+                                testSteps.add(stepDescription + "  (" + functionCall.name().get() + " " + args + ")");
+                                history.add(Content.fromParts(Part.fromText("Remember: Allways add a description field to each function call.")));
+                                result.put("warning", "mandatory description field missing");
+                            }
+
+                            safetyCounter = 0;
+                            testFinished = Allure.step(stepDescription, () -> {
+
+                                takeScreenshot(functionCall, "_00_before_function"); // Debug screenshot
+
+                                boolean testFinishedInsideStep = false;
+
+                                // --- FUNCTION EXECUTION SWITCH ---
+                                switch (functionCall.name().get())
                                 {
-                                    clearInputScaledCoords(xType, yType);
+                                    case "open_web_browser":
+                                        result.put("status", "success");
+                                        break;
+                                    case "navigate":
+                                    case "navigate_to_url":
+                                        Selenide.open((String) args.get("url"));
+                                        result.put("status", "success");
+                                        break;
+                                    case "go_back":
+                                        Selenide.back();
+                                        result.put("status", "success");
+                                        break;
+                                    case "java_method":
+                                        runMethodWithReflection((String) args.get("name"), (String) args.get("parameter"));
+                                        result.put("status", "success");
+                                    case "finish_test":
+                                        testFinishedInsideStep = true;
+                                        testSteps.add("Summary: " + (String) args.get("summary"));
+                                        break;
+                                    case "click_element":
+                                        try
+                                        {
+                                            $((String) args.get("selector"))
+                                                                            .highlight()
+                                                                            .click();
+                                            result.put("status", "success");
+                                        }
+                                        catch (Exception e)
+                                        {
+                                            result.put("status", "error");
+                                            result.put("message", e.getMessage());
+                                        }
+                                        break;
+                                    case "click_at":
+                                        int xClick = ((Number) args.get("x")).intValue();
+                                        int yClick = ((Number) args.get("y")).intValue();
+                                        clickScaledCoords(xClick, yClick);
+                                        result.put("status", "success");
+                                        break;
+                                    case "type_text":
+                                        String text = (String) args.get("text");
+                                        String selectorForTyping = (String) args.get("selector");
+                                        if (selectorForTyping != null)
+                                        {
+                                            $(selectorForTyping).highlight().type(text);
+                                        }
+                                        else
+                                        {
+                                            sendText(text); // Global typing (no specific element)
+                                        }
+                                        result.put("status", "success");
+                                        break;
+                                    case "type_text_at":
+                                        boolean clearBeforeTyping = (boolean) ((args.get("clear_before_typing") == null) ? false
+                                                                                                                         : args.get("clear_before_typing"));
+                                        String text_to_type = (String) args.get("text");
+                                        boolean press_enter = (Boolean) args.getOrDefault("press_enter", false);
+                                        int xType = ((Number) args.get("x")).intValue();
+                                        int yType = ((Number) args.get("y")).intValue();
+
+                                        if (clearBeforeTyping == true)
+                                        {
+                                            clearInputScaledCoords(xType, yType);
+                                        }
+                                        clickScaledCoords(xType, yType);
+                                        sendText(text_to_type);
+                                        if (press_enter)
+                                        {
+                                            Actions actions = new Actions(WebDriverRunner.getWebDriver());
+                                            actions.sendKeys(Keys.ENTER).perform();
+                                        }
+                                        result.put("status", "success");
+                                        break;
+                                    case "scroll_document":
+                                        String direction = (String) args.get("direction");
+                                        int magnitude = 800;
+                                        if (args.containsKey("magnitude"))
+                                        {
+                                            magnitude = ((Number) args.get("magnitude")).intValue();
+                                        }
+                                        if ("down".equals(direction))
+                                        {
+                                            scroll(0, magnitude);
+                                        }
+                                        else if ("up".equals(direction))
+                                        {
+                                            scroll(0, -magnitude);
+                                        }
+                                        result.put("status", "success");
+                                        break;
+                                    case "take_screenshot":
+                                        byte[] screenshotBytes = new ByteArrayInputStream(((TakesScreenshot) WebDriverRunner.getWebDriver()).getScreenshotAs(OutputType.BYTES)).readAllBytes();
+                                        result.put("screenshot-image-bytes", screenshotBytes);
+                                        result.put("status", "success");
+                                        break;
+                                    case "hover_at":
+                                        int x = ((Number) args.get("x")).intValue();
+                                        int y = ((Number) args.get("y")).intValue();
+                                        hoverScaledCoords(x, y);
+                                        result.put("status", "success");
+                                        break;
+                                    case "wait_5_seconds":
+                                        Selenide.sleep(5000);
+                                        result.put("status", "success");
+                                        break;
+                                    case "report_issue":
+                                        // Stops the test and fails immediately via JUnit assertion
+                                        SelenideAddons.wrapAssertionError(() -> Assertions.assertEquals((String) args.get("expectedValue"),
+                                                                                                        (String) args.get("actualValue"),
+                                                                                                        (String) args.get("errorMessage")));
+                                        break;
+                                    case "get_page_content":
+                                        String cleanedDom = getCleanedDom();
+                                        AllureAddons.addAttachmentToStep("DOM Content", "text/html", ".html",
+                                                                         new ByteArrayInputStream(cleanedDom.getBytes(StandardCharsets.UTF_8)));
+
+                                        result.put("content", Part.fromText(cleanedDom));
+                                        break;
+                                    default:
+                                        result.put("error", "unsupported function");
                                 }
-                                clickScaledCoords(xType, yType);
-                                sendText(text_to_type);
-                                if (press_enter)
+
+                                if (functionCall.args().get().containsKey("x") && functionCall.args().get().containsKey("y"))
                                 {
-                                    Actions actions = new Actions(WebDriverRunner.getWebDriver());
-                                    actions.sendKeys(Keys.ENTER).perform();
+                                    int x = ((Number) functionCall.args().get().get("x")).intValue();
+                                    int y = ((Number) functionCall.args().get().get("y")).intValue();
+
+                                    history.add(Content.fromParts(Part.fromText("Check on the next image if the coordinates you tried to use (" + x + "," + y
+                                                                                + ") are where you intendet to act. They are marked with a pink 5x5 square.")));
                                 }
-                                result.put("status", "success");
-                                break;
-                            case "scroll_document":
-                                String direction = (String) args.get("direction");
-                                int magnitude = 800;
-                                if (args.containsKey("magnitude"))
-                                {
-                                    magnitude = ((Number) args.get("magnitude")).intValue();
-                                }
-                                if ("down".equals(direction))
-                                {
-                                    scroll(0, magnitude);
-                                }
-                                else if ("up".equals(direction))
-                                {
-                                    scroll(0, -magnitude);
-                                }
-                                result.put("status", "success");
-                                break;
-                            case "take_screenshot":
-                                byte[] screenshotBytes = new ByteArrayInputStream(((TakesScreenshot) WebDriverRunner.getWebDriver()).getScreenshotAs(OutputType.BYTES)).readAllBytes();
-                                result.put("screenshot-image-bytes", screenshotBytes);
-                                result.put("status", "success");
-                                break;
-                            case "hover_at":
-                                int x = ((Number) args.get("x")).intValue();
-                                int y = ((Number) args.get("y")).intValue();
-                                hoverScaledCoords(x, y);
-                                result.put("status", "success");
-                                break;
-                            case "wait_5_seconds":
-                                Selenide.sleep(5000);
-                                result.put("status", "success");
-                                break;
-                            case "report_issue":
-                                // Stops the test and fails immediately via JUnit assertion
-                                SelenideAddons.wrapAssertionError(() -> Assertions.assertEquals((String) args.get("expectedValue"),
-                                                                                                (String) args.get("actualValue"),
-                                                                                                (String) args.get("errorMessage")));
-                                break;
-                            case "get_page_content":
-                                result.put("content", Part.fromText(getCleanedDom()));
-                                break;
-                            default:
-                                result.put("error", "unsupported function");
+
+                                result.put("url", Neodymium.getDriver().getCurrentUrl());
+
+                                log.append("\t").append("Result:\n").append(result).append("\n").append("\n");
+                                return testFinishedInsideStep;
+                            });
+
+                            Selenide.sleep(1000);
+                            // Capture browser state (as screenshot) to send back to AI
+                            byte[] screenshot = takeScreenshot(functionCall, "_10_after_function");// new
+                            // ByteArrayInputStream(((TakesScreenshot)
+                            // WebDriverRunner.getWebDriver()).getScreenshotAs(OutputType.BYTES)).readAllBytes();
+
+                            // Add result and new screenshot to history
+                            history.add(Content.fromParts(
+                                                          Part.fromFunctionResponse(functionCall.name().get(), result),
+                                                          Part.fromBytes(screenshot, "image/png"),
+                                                          Part.fromText("Now let's check if that worked and do the next step.")));
+
+                        }
+                        catch (IllegalArgumentException e)
+                        {
+                            e.printStackTrace();
+                            // Fallback for illegal responses/hallucinations from API
                         }
 
-                        result.put("url", Neodymium.getDriver().getCurrentUrl());
-                        return testFinishedInsideStep;
-                    });
-
-                    Selenide.sleep(1000);
-                    // Capture browser state (as screenshot) to send back to AI
-                    byte[] screenshot = new ByteArrayInputStream(((TakesScreenshot) WebDriverRunner.getWebDriver()).getScreenshotAs(OutputType.BYTES)).readAllBytes();
-
-                    // Add result and new screenshot to history
-                    history.add(Content.fromParts(
-                                                  Part.fromFunctionResponse(functionCall.name().get(), result),
-                                                  Part.fromBytes(screenshot, "image/png"),
-                                                  Part.fromText("Now let's check if that worked and do the next step.")));
-
-                    takeScreenshot(functionCall, "_10_after_function");
+                    }
                 }
             }
-        }
-        catch (IllegalArgumentException e)
-        {
-            e.printStackTrace();
-            // Fallback for illegal responses/hallucinations from API
+            finally
+            {
+                Allure.addAttachment("AI Log", log.toString());
+            }
         }
     }
 
@@ -337,11 +396,19 @@ public abstract class AbstractAiTest
     private String systemPrompt()
     {
         return """
-            You are a Browser Automation and QA Agent. You automate a web browser. You get screenshots and can access the DOM if needed by calling functions.
+            **CORE REQUIREMENT: CHAIN OF THOUGHT**
+            Before calling ANY function, you MUST output a thought block explaining your reasoning.
+            Analyze the current screenshot, check if the previous step succeeded, and plan the exact next step.
+            Format your thought like this:
+            <thought>
+            <analysis>[What do I see? Is the previous step finished?]</analysis>
+            <plan>[What is the exact next action?]</plan>
+            </thought>
 
-            ALWAYS do one step at a time. Think, describe what you think, call a function in your response, wait for input, repeat.
+            ALWAYS do one step at a time. Be extremely strict about the defined steps.
 
-            Be extremely strict about the steps.
+            You get a screenshot for each step. If you try to use any coordinates those will be marked with a pink square on the screenshot.
+            If something is not working as expected, search for the pink square and adjust your coordinates accordingly.
 
             GENERAL RULES:
             1. You are automating, stick to the prompt, don't try around
@@ -350,6 +417,7 @@ public abstract class AbstractAiTest
             4. NEVER skip a step if the result is not exactly correct
             5. If you want to click based on coordinates always use the center of the element you try to click
             6. If a precondition for a step is not fulfilled ALWAYS use 'report_issue' tool, to stop the test
+            7. NEVER output a tool call without a preceding `
 
             RULES FOR FUNCTIONS:
             1. For EVERY function call add a "description" field containing information what you are doing in this function.
@@ -365,6 +433,8 @@ public abstract class AbstractAiTest
             2. Instead, you MUST use the 'report_validation' tool immediately.
             3. Extract the 'actualValue' from the page and compare it to the 'expectedValue' from the prompt.
             4. Set 'isPassing' to true only if they match exactly.
+
+
             """;
     }
 
@@ -387,11 +457,29 @@ public abstract class AbstractAiTest
                                                                                                  Schema.builder().type(Type.Known.STRING)
                                                                                                        .enum_(List.of("PASS", "FAIL"))
                                                                                                        .description("The final result of the test").build(),
+                                                                                                 "description",
+                                                                                                 Schema.builder().type(Type.Known.STRING)
+                                                                                                       .description("A very short description of the goal of this function call.")
+                                                                                                       .build(),
                                                                                                  "summary",
                                                                                                  Schema.builder().type(Type.Known.STRING)
                                                                                                        .description("A short summary of what happened")
                                                                                                        .build()))
-                                                                              .required(List.of("status", "summary"))
+                                                                              .required(List.of("status", "summary", "description"))
+                                                                              .build())
+                                                            .build();
+        FunctionDeclaration getContent = FunctionDeclaration.builder()
+                                                            .name("get_page_content")
+                                                            .description("Retrieves the DOM or page content from the browser.")
+                                                            .parameters(
+                                                                        Schema.builder()
+                                                                              .type(Type.Known.OBJECT)
+                                                                              .properties(Map.of(
+                                                                                                 "description",
+                                                                                                 Schema.builder().type(Type.Known.STRING)
+                                                                                                       .description("A very short description of the goal of this function call.")
+                                                                                                       .build()))
+                                                                              .required(List.of("description"))
                                                                               .build())
                                                             .build();
 
@@ -405,10 +493,14 @@ public abstract class AbstractAiTest
                                                                                                  "name",
                                                                                                  Schema.builder().type(Type.Known.STRING)
                                                                                                        .description("The name of the mehtod").build(),
+                                                                                                 "description",
+                                                                                                 Schema.builder().type(Type.Known.STRING)
+                                                                                                       .description("A very short description of the goal of this function call.")
+                                                                                                       .build(),
                                                                                                  "parameter",
                                                                                                  Schema.builder().type(Type.Known.STRING)
                                                                                                        .description("The parameter needed").build()))
-                                                                              .required(List.of("name", "parameter"))
+                                                                              .required(List.of("name", "parameter", "description"))
                                                                               .build())
                                                             .build();
 
@@ -425,11 +517,16 @@ public abstract class AbstractAiTest
                                                                                                      "expectedValue",
                                                                                                      Schema.builder().type(Type.Known.STRING)
                                                                                                            .description("The expected value").build(),
+                                                                                                     "description",
+                                                                                                     Schema.builder().type(Type.Known.STRING)
+                                                                                                           .description("A very short description of the goal of this function call.")
+                                                                                                           .build(),
                                                                                                      "errorMessage",
                                                                                                      Schema.builder().type(Type.Known.STRING)
                                                                                                            .description("Error details if failing")
                                                                                                            .build()))
-                                                                                  .required(List.of("errorMessage", "actualValue", "expectedValue"))
+                                                                                  .required(List.of("errorMessage", "actualValue", "expectedValue",
+                                                                                                    "description"))
                                                                                   .build())
                                                                 .build();
 
@@ -443,11 +540,15 @@ public abstract class AbstractAiTest
                                                                                                  "result",
                                                                                                  Schema.builder().type(Type.Known.BOOLEAN)
                                                                                                        .description("The extracted value").build(),
+                                                                                                 "description",
+                                                                                                 Schema.builder().type(Type.Known.STRING)
+                                                                                                       .description("A very short description of the goal of this function call.")
+                                                                                                       .build(),
                                                                                                  "reason",
                                                                                                  Schema.builder().type(Type.Known.STRING)
                                                                                                        .description("The reason why the last step got the according result. Focus on the last step.")
                                                                                                        .build()))
-                                                                              .required(List.of("result", "reason"))
+                                                                              .required(List.of("result", "reason", "description"))
                                                                               .build())
                                                             .build();
 
@@ -458,18 +559,20 @@ public abstract class AbstractAiTest
                                                                           Schema.builder()
                                                                                 .type(Type.Known.OBJECT)
                                                                                 .properties(Map.of(
+                                                                                                   "description",
+                                                                                                   Schema.builder().type(Type.Known.STRING)
+                                                                                                         .description("A very short description of the goal of this function call.")
+                                                                                                         .build(),
                                                                                                    "selector",
                                                                                                    Schema.builder().type(Type.Known.STRING)
                                                                                                          .description("The css locator for the desired element")
                                                                                                          .build()))
-                                                                                .required(List.of("selector"))
+                                                                                .required(List.of("selector", "description"))
                                                                                 .build())
                                                               .build();
 
-
-
         List<FunctionDeclaration> functionDeclarations = List.of(validationTool, finishTool,
-                                                                 javaMethod, reviewTool, clickElement);
+                                                                 javaMethod, reviewTool, clickElement, getContent);
         return functionDeclarations;
     }
 
@@ -492,11 +595,11 @@ public abstract class AbstractAiTest
 
         String pageContent = doc.html();
 
-        // Limit size to avoid context window overflow
-        if (pageContent.length() > 20000)
-        {
-            pageContent = pageContent.substring(0, 20000);
-        }
+        // // Limit size to avoid context window overflow
+        // if (pageContent.length() > 20000)
+        // {
+        // pageContent = pageContent.substring(0, 20000);
+        // }
 
         String domContent = "Current Page DOM:\n" + pageContent;
         return domContent;
@@ -508,10 +611,11 @@ public abstract class AbstractAiTest
      * 
      * @param functionCall
      *            The function call containing coordinates (if any).
+     * @return
      */
-    private void takeScreenshot(FunctionCall functionCall)
+    private byte[] takeScreenshot(FunctionCall functionCall)
     {
-        takeScreenshot(functionCall, "");
+        return takeScreenshot(functionCall, "");
     }
 
     /**
@@ -521,8 +625,9 @@ public abstract class AbstractAiTest
      *            The function call containing coordinates.
      * @param additionalMessage
      *            Suffix for the filename.
+     * @return
      */
-    private void takeScreenshot(FunctionCall functionCall, String additionalMessage)
+    private byte[] takeScreenshot(FunctionCall functionCall, String additionalMessage)
     {
         if (functionCall.args().get().containsKey("x") && functionCall.args().get().containsKey("y"))
         {
@@ -532,8 +637,10 @@ public abstract class AbstractAiTest
             // Map AI coordinates (usually 1000x1000 relative) to screen coordinates
             var scaled = new ScaledCoord(x, y).scaleTo(1000, 1000);
 
-            ScreenshotMarker.takeScreenshotWithMarker(scaled.x, scaled.y, functionCall.name().get() + additionalMessage);
+            return ScreenshotMarker.takeScreenshotWithMarker(scaled.x, scaled.y, functionCall.name().get() + additionalMessage);
         }
+
+        return ScreenshotMarker.takeScreenshotWithMarker(-1, -1, functionCall.name().get() + additionalMessage);
     }
 
     /**
@@ -711,5 +818,48 @@ public abstract class AbstractAiTest
         }
 
         return null;
+    }
+
+    /**
+     * Make sure we don't run out of tokens
+     * 
+     * @param client
+     * @param history
+     * @param modelName
+     * @param functionDeclarations
+     * @param systemPromot
+     */
+    private void manageHistory(Client client, List<Content> history, String modelName, List<FunctionDeclaration> functionDeclarations,
+                                      Content systemPromot)
+    {
+
+        while (true)
+        {
+            CountTokensResponse response = client.models.countTokens(
+                                                                     modelName,
+                                                                     history,
+                                                                     null);
+
+            long currentTokens = response.totalTokens().get();
+            System.out.println("Current Tokens: " + currentTokens + " / " + TOKEN_LIMIT);
+
+            if (currentTokens <= TOKEN_LIMIT)
+            {
+                break;
+            }
+
+            // Prune logic
+            if (history.size() > 3)
+            {
+                System.out.println("✂️ Pruning history...");
+                history.remove(1); // Remove oldest Model response
+                history.remove(1); // Remove oldest Tool response
+            }
+            else
+            {
+                System.err.println("⚠️ History cannot be pruned further.");
+                break;
+            }
+        }
     }
 }
