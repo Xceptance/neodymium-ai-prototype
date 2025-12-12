@@ -5,45 +5,159 @@
 	<groupId>com.xceptance.neodymium.project</groupId>
 	<artifactId>neodymium-ai-prototype</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
+	<organization>
+		<name>Xceptance Software Technologies</name>
+		<url>https://www.xceptance.com/</url>
+	</organization>
+
+	<profiles>
+		<profile>
+			<id>junit-4</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-surefire-plugin</artifactId>
+						<configuration>
+							<includes>
+								<include>posters/**/*Test.java</include>
+							</includes>
+						</configuration>
+						<dependencies>
+							<dependency>
+								<groupId>org.junit.vintage</groupId>
+								<artifactId>junit-vintage-engine</artifactId>
+								<version>${junit.vintage.version}</version>
+							</dependency>
+						</dependencies>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
+
+	<licenses>
+		<license>
+			<name>MIT</name>
+			<url>https://opensource.org/licenses/MIT</url>
+			<distribution>repo</distribution>
+		</license>
+	</licenses>
+
+	<properties>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<maven.compiler.source>17</maven.compiler.source>
+		<maven.compiler.target>17</maven.compiler.target>
+		<surefire.version>3.0.0-M5</surefire.version>
+		<aspectj.version>1.9.24</aspectj.version>
+		<allure.version>2.12.0</allure.version>
+		<neodymium.version>5.3.0-SNAPSHOT</neodymium.version>
+		<xcmailr.version>1.1.3</xcmailr.version>
+		<maven.javadoc.version>3.2.0</maven.javadoc.version>
+		<log4j.version>2.23.1</log4j.version>
+		<junit.vintage.version>5.11.4</junit.vintage.version>
+	</properties>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<version>${surefire.version}</version>
+				<configuration>
+					<forkCount>2</forkCount>
+					<!-- our test case naming does not follow Maven naming
+					conventions -->
+					<includes>
+						<include>posters/tests/**/*Test.java</include>
+					</includes>
+					<testFailureIgnore>true</testFailureIgnore>
+					<argLine>
+						-javaagent:"${settings.localRepository}/org/aspectj/aspectjweaver/${aspectj.version}/aspectjweaver-${aspectj.version}.jar"</argLine>
+					<properties>
+						<property>
+							<name>listener</name>
+							<value>io.qameta.allure.junit4.AllureJunit4</value>
+						</property>
+					</properties>
+					<systemPropertyVariables>
+						<allure.results.directory>
+							${project.build.directory}/allure-results</allure.results.directory>
+						<allure.link.issue.pattern>https://ask.xceptance.de/t/{}</allure.link.issue.pattern>
+						<allure.link.tms.pattern>https://ask.xceptance.de/t/{}</allure.link.tms.pattern>
+						<selenide.reports>
+							${project.build.directory}/selenide-results</selenide.reports>
+					</systemPropertyVariables>
+				</configuration>
+				<dependencies>
+					<dependency>
+						<groupId>org.aspectj</groupId>
+						<artifactId>aspectjweaver</artifactId>
+						<version>${aspectj.version}</version>
+					</dependency>
+				</dependencies>
+			</plugin>
+			<plugin>
+				<groupId>io.qameta.allure</groupId>
+				<artifactId>allure-maven</artifactId>
+				<version>${allure.version}</version>
+				<configuration>
+					<reportVersion>2.27.0</reportVersion>
+					<resultsDirectory>${project.build.directory}/allure-results</resultsDirectory>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-javadoc-plugin</artifactId>
+				<version>${maven.javadoc.version}</version>
+				<executions>
+					<execution>
+						<id>attach-javadocs</id>
+						<goals>
+							<goal>jar</goal>
+							<goal>test-jar</goal>
+						</goals>
+					</execution>
+				</executions>
+				<configuration>
+					<source>17</source>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
 
 	<dependencies>
 		<dependency>
-			<groupId>com.google.genai</groupId>
-			<artifactId>google-genai</artifactId>
-			<version>1.28.0</version>
-		</dependency>
-		<dependency>
-			<groupId>com.microsoft.playwright</groupId>
-			<artifactId>playwright</artifactId>
-			<version>1.56.0</version>
-		</dependency>
-		<dependency>
-			<groupId>org.junit.jupiter</groupId>
-			<artifactId>junit-jupiter-engine</artifactId>
-			<version>6.0.0-M2</version>
-		</dependency>
-		<dependency>
 			<groupId>com.xceptance</groupId>
 			<artifactId>neodymium-library</artifactId>
-			<version>5.3.0-SNAPSHOT</version>
+			<version>${neodymium.version}</version>
+			<scope>test</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.jsoup</groupId>
 			<artifactId>jsoup</artifactId>
 			<version>1.17.2</version>
 		</dependency>
+		<dependency>
+			<groupId>com.google.genai</groupId>
+			<artifactId>google-genai</artifactId>
+			<version>1.28.0</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.logging.log4j</groupId>
+			<artifactId>log4j-slf4j2-impl</artifactId>
+			<version>${log4j.version}</version>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
 
-
-	<properties>
-		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-		<maven.compiler.source>21</maven.compiler.source>
-		<maven.compiler.target>21</maven.compiler.target>
-		<surefire.version>2.22.2</surefire.version>
-		<aspectj.version>1.9.21</aspectj.version>
-		<allure.version>2.12.0</allure.version>
-		<allure.report.version>2.29.0</allure.report.version>
-		<pdfbox.version>2.0.24</pdfbox.version>
-	</properties>
-
+	<reporting>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-report-plugin</artifactId>
+				<version>${surefire.version}</version>
+			</plugin>
+		</plugins>
+	</reporting>
 </project>
