@@ -66,7 +66,7 @@ import io.qameta.allure.Allure;
 // @Retry()
 public abstract class AbstractAiTest
 {
-    private static final String gemini_api_key = "AIzaSyC8WX_6ok70RkVB_PJEfW5fZp-R5saxfAA";
+    private static final String gemini_api_key = "";
 
     // TODO: we need to get this from Neodymiums browser configuration.
     /** Standard viewport height for AI consistency. */
