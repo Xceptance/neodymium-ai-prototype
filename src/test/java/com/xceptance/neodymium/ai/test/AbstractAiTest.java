@@ -237,6 +237,7 @@ public abstract class AbstractAiTest
                                     case "java_method":
                                         runMethodWithReflection((String) args.get("name"), (String) args.get("parameter"));
                                         result.put("status", "success");
+                                        break;
                                     case "finish_test":
                                         testFinishedInsideStep = true;
                                         testSteps.add("Summary: " + (String) args.get("summary"));
